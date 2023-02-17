@@ -5,6 +5,7 @@
 #include <SDL2/SDL.h>
 #include <unistd.h>
 #include <sys/time.h>
+#include <time.h>
 
 #define STACK_SIZE 64
 #define WIDTH 64
@@ -25,10 +26,11 @@
 
 SDL_Renderer *renderer;
 
-uint16_t v[0xf];
+uint16_t v[0xf + 1];
 uint16_t I;
 uint16_t pc;
 uint16_t delay;
+uint16_t sound;
 uint8_t  mem[0x10000];
 uint16_t stack[STACK_SIZE];
 uint16_t sp;
@@ -44,6 +46,7 @@ void draw_pixel(int x, int y, uint8_t p);
 void draw_screen();
 
 int main(int argc, char *argv[]) {
+  srand(time(NULL));
   if (argc != 2) {
     return 1;
   }
@@ -76,9 +79,6 @@ int main(int argc, char *argv[]) {
     return 2;
   }
 
-  /* SDL_DestroyWindow(window); */
-  /* SDL_Quit(); */
-  /* return 0; */
   clear_screen();
   draw_screen();
   draw_screen();  
@@ -92,6 +92,7 @@ int main(int argc, char *argv[]) {
     gettimeofday(&end, NULL);
     if (end.tv_usec - start.tv_usec >= TICK) {
       delay -= 1;
+      sound -= 1; // TODO play sound if register reaches 0
       gettimeofday(&start, NULL);      
     }
     cycle();
@@ -131,7 +132,7 @@ void cycle() {
       }
     } else {
       // printf("call (bin) 0x%x\n", nnn);
-      // TODO
+      // TODO (probably not needing this)
     }
   }
 
@@ -173,6 +174,9 @@ void cycle() {
     v[vx] += n;
   }
 
+  uint16_t hobx = v[vx] & 0x80;
+  uint16_t hoby = v[vy] & 0x80;  
+
   if ((op & 0xf000) == 0x8000) {
     switch (op & 0xf) {
     case 0:
@@ -194,12 +198,28 @@ void cycle() {
     case 4:
       // printf("v%x += v%x (with carry)\n", vx, vy);
       v[vx] += v[vy];
-      // TODO set v[0xf] to 1 if there was a carry
+      if (hobx != hoby) {
+	// no way to overflow if values have different signs
+	break;
+      }
+      if ((v[vx] & 0x80) != hobx) {
+	// vx after addition has different sign than vx before and vy.
+	// means that we overflowed
+	v[0xf] = 1;
+      }
       break;
     case 5:
       // printf("v%x -= v%x (with carry)\n", vx, vy);
       v[vx] -= v[vy];
-      // TODO set v[0xf] to 1 if there was a borrow
+      if (hobx != hoby) {
+	// no way to overflow if values have different signs
+	break;
+      }
+      if ((v[vx] & 0x80) != hobx) {
+	// vx after subtraction has different sign than vx before and vy.
+	// means that we overflowed
+	v[0xe] = 1;
+      }
       break;
     case 6:
       // printf("v%x = v%x >> 1\n", vx, vy);
@@ -208,7 +228,15 @@ void cycle() {
     case 7:
       // printf("v%x = v%x - v%x (with carry)\n", vx, vy, vx);
       v[vx] = v[vy] - v[vy];
-      // TODO set v[0xf] to 1 if there was a borrow
+      if (hobx != hoby) {
+	// no way to overflow if values have different signs
+	break;
+      }
+      if ((v[vx] & 0x80) != hobx) {
+	// vx after addition has different sign than vx before and vy.
+	// means that we overflowed
+	v[0xf] = 1;
+      }
       break;
     case 0xe:
       // printf("v%x = v%x << 1\n", vx, vy);
@@ -237,12 +265,11 @@ void cycle() {
   
   if ((op & 0xf000) == 0xc000) {
     // printf("v%x = rand(%x)\n", vx, nn);
-    uint16_t r = 0; // TODO get random number
+    uint16_t r = rand();
     v[vx] = r | nn;
   }
 
   if ((op & 0xf000) == 0xd000) {
-    // printf("draw(v%x, v%x, %x)\n", vx, vy, n);
     for (int i = 0; i < n; i++) {
       uint8_t byte = mem[I + i];
       int x = vx;
@@ -251,10 +278,9 @@ void cycle() {
     }
   }
 
-  // TODO
   if ((op & 0xf000) == 0xe000) {
     switch (op & 0x00ff) {
-    case 0x9e:
+    case 0x9e: // TODO
       // printf("skip if v%x pressed\n", vx);
       break;
     case 0xa1:
@@ -281,8 +307,9 @@ void cycle() {
       // printf("delay = v%x\n", vx);
       delay = v[vx];
       break;
-    case 0x18: // TODO
+    case 0x18:
       // printf("sound = v%x\n", vx);
+      sound = v[vx];
       break;
     case 0x1e:
       // printf("i += v%x\n", vx);
@@ -294,11 +321,18 @@ void cycle() {
     case 0x33: // TODO
       // printf("i, i+1, i+2 = bcd(v%x)\n", vx);
       break;
-    case 0x55: // TODO
+    case 0x55:
       // printf("i... = v0..v%x\n", vx);
+      for (int i = 0; i < vx; i++) {
+	mem[I + i] = v[i] & 0xff;
+	mem[I + i + 1] = (v[i] & 0xff00) >> 8;
+      }
       break;
-    case 0x65: // TODO
+    case 0x65:
       // printf("v0..v%x = i..\n", vx);
+      for (int i = 0; i < vx; i++) {
+	v[i] = mem[I + i];
+      }
       break;
     }
   }  
