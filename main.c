@@ -215,9 +215,9 @@ void cycle() {
 	// no way to overflow if values have different signs
 	break;
       }
-      if ((v[vx] & 0x80) != hobx) {
-	// vx after subtraction has different sign than vx before and vy.
-	// means that we overflowed
+      if ((v[vx] & 0x80) == hobx) {
+	// vx after subtraction has the same sign as vx before and vy.
+	// means that we did not underflow
 	v[0xe] = 1;
       }
       break;
